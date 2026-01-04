@@ -38,3 +38,58 @@ def get_resnet_feature_extractor():
     model.to(device)
     model.eval() #freeze layers
     return model    
+
+#reads video, extracts 1fps, runs resnet and returens numpy array of shape (n_seconds, 2048)
+def extract_features_for_video(video_path, model, transform):
+    capture = cv2.VideoCapture(video_path)
+    if not capture.isOpened():
+        print(f"error opening video {video_path}")
+        return None
+    
+    fps = capture.get(cv2.CAP_PROP_FPS) #calculate frame interval for 1fps
+    if fps <= 0:
+        fps = 25.0 #fallback
+
+    frame_interval = int(np.round(fps)) #skip fps frames
+    frames_buffer = []
+    features_list = []
+    frame_count = 0
+
+    while True:
+        retain, frame = capture.read()
+        if not retain:
+            break
+
+        #downsampling to 1 fps
+        if frame_count % frame_interval == 0:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) #convert bgr to rgb
+            
+            frame_tensor = transform(frame) #preprocess to tensor
+            frames_buffer.append(frame_tensor)
+
+            if len(frames_buffer) == batch_size: #when batch is full
+                batch = torch.stackl(frames_buffer).to(device) #stack (32, 3, 224, 224)
+
+                with torch.no_grad():
+                    output = model(batch) #(32, 2048, 1, 1)
+                    output = output.flatten(start_dim=1) #(32, 2048)
+
+                features_list.append(output.cpu().numpy())
+                frames_buffer = []
+        
+        frame_count += 1
+
+    if frames_buffer: #remaining frames
+        batch = torch.stack(frames_buffer).to(device)
+        with torch.no_grad():
+            output = model(batch).flatten(start_dim=1)
+        features_list.append(output.cpu().numpy())
+
+    capture.release()
+
+    if not features_list:
+        return None
+    
+    return np.concatenate(features_list, axis=0) #concatenate all batches into 1 long array
+        
+
