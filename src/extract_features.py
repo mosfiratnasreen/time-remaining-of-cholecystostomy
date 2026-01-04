@@ -92,4 +92,47 @@ def extract_features_for_video(video_path, model, transform):
     
     return np.concatenate(features_list, axis=0) #concatenate all batches into 1 long array
         
+def main():
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    #standard imagenet parameters
+    transform = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    print("loading resnet50 on device")
+    model = get_resnet_feature_extractor()
 
+    #get list of videos
+    if not os.path.exists(video_dir):
+        print(f"error -  video directory not found at {video_dir}")
+        return
+    video_files = [f for f in os.listdir(video_dir) if f.endswith('.mp4')]
+    video_files.sort()
+    print(f"found {len(video_files)} videos. starting extraction at 1fps")
+
+    for vid_file in tqdm(video_files):
+        video_name = vid_file.split('.')[0]
+        save_path = os.path.join(output_dir, f"{video_name}.npy")
+
+        if os.path.exists(save_path):
+            continue
+
+        video_path = os.path.join(video_dir, vid_file)
+
+        #extraction    
+        features = extract_features_for_video(video_path, model, transforms)
+
+        if features is not None:
+            np.save(save_path, features) #save compressed .npy
+        else:
+            print(f"no features extracted for {vid_file}")    
+    print(f"done - all features extracted to {output_dir}")
+          
+
+if __name__ == "__main__":
+    main()
