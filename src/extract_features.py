@@ -7,8 +7,9 @@ import numpy as np
 import os
 from tqdm import tqdm  # progress bar
 
-video_dir = "data/cholec80/videos"
-output_dir = "data/features"
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+video_dir = os.path.join(base_dir, "data", "cholec80", "videos")
+output_dir = os.path.join(base_dir, "data", "features")
 batch_size = 32
 
 def get_device():
@@ -68,7 +69,7 @@ def extract_features_for_video(video_path, model, transform):
             frames_buffer.append(frame_tensor)
 
             if len(frames_buffer) == batch_size: #when batch is full
-                batch = torch.stackl(frames_buffer).to(device) #stack (32, 3, 224, 224)
+                batch = torch.stack(frames_buffer).to(device) #stack (32, 3, 224, 224)
 
                 with torch.no_grad():
                     output = model(batch) #(32, 2048, 1, 1)
@@ -125,7 +126,7 @@ def main():
         video_path = os.path.join(video_dir, vid_file)
 
         #extraction    
-        features = extract_features_for_video(video_path, model, transforms)
+        features = extract_features_for_video(video_path, model, transform)
 
         if features is not None:
             np.save(save_path, features) #save compressed .npy
