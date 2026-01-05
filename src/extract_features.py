@@ -12,6 +12,7 @@ video_dir = os.path.join(base_dir, "data", "cholec80", "videos")
 output_dir = os.path.join(base_dir, "data", "features")
 batch_size = 32
 
+
 def get_device():
     if torch.backends.mps.is_available():
         print("using m1 GPU acceleration")
@@ -22,36 +23,41 @@ def get_device():
     else:
         print("no gpu detected > using cpu")
         return torch.device("cpu")
-    
+
+
 device = get_device()
 
-#load resnet, remove classification head and return the 2048-dim feature extractor
+# load resnet, remove classification head and return the 2048-dim feature extractor
+
+
 def get_resnet_feature_extractor():
     try:
         weights = models.ResNet50_Weights.IMAGENET1K_V1
-        model = models.resnet50(weights = weights)
+        model = models.resnet50(weights=weights)
     except:
-        model = models.resnet50(pretrained=True) #fallback to older versions
+        model = models.resnet50(pretrained=True)  # fallback to older versions
 
-    modules = list(model.children())[:-1] #remove the last fc layer
-    model = nn.Sequential(*modules) # output = (batch, 2048, 1, 1)
+    modules = list(model.children())[:-1]  # remove the last fc layer
+    model = nn.Sequential(*modules)  # output = (batch, 2048, 1, 1)
 
     model.to(device)
-    model.eval() #freeze layers
-    return model    
+    model.eval()  # freeze layers
+    return model
 
-#reads video, extracts 1fps, runs resnet and returens numpy array of shape (n_seconds, 2048)
+# reads video, extracts 1fps, runs resnet and returens numpy array of shape (n_seconds, 2048)
+
+
 def extract_features_for_video(video_path, model, transform):
     capture = cv2.VideoCapture(video_path)
     if not capture.isOpened():
         print(f"error opening video {video_path}")
         return None
-    
-    fps = capture.get(cv2.CAP_PROP_FPS) #calculate frame interval for 1fps
-    if fps <= 0:
-        fps = 25.0 #fallback
 
-    frame_interval = int(np.round(fps)) #skip fps frames
+    fps = capture.get(cv2.CAP_PROP_FPS)  # calculate frame interval for 1fps
+    if fps <= 0:
+        fps = 25.0  # fallback
+
+    frame_interval = int(np.round(fps))  # skip fps frames
     frames_buffer = []
     features_list = []
     frame_count = 0
@@ -61,26 +67,28 @@ def extract_features_for_video(video_path, model, transform):
         if not retain:
             break
 
-        #downsampling to 1 fps
+        # downsampling to 1 fps
         if frame_count % frame_interval == 0:
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) #convert bgr to rgb
-            
-            frame_tensor = transform(frame) #preprocess to tensor
+            # convert bgr to rgb
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            frame_tensor = transform(frame)  # preprocess to tensor
             frames_buffer.append(frame_tensor)
 
-            if len(frames_buffer) == batch_size: #when batch is full
-                batch = torch.stack(frames_buffer).to(device) #stack (32, 3, 224, 224)
+            if len(frames_buffer) == batch_size:  # when batch is full
+                batch = torch.stack(frames_buffer).to(
+                    device)  # stack (32, 3, 224, 224)
 
                 with torch.no_grad():
-                    output = model(batch) #(32, 2048, 1, 1)
-                    output = output.flatten(start_dim=1) #(32, 2048)
+                    output = model(batch)  # (32, 2048, 1, 1)
+                    output = output.flatten(start_dim=1)  # (32, 2048)
 
                 features_list.append(output.cpu().numpy())
                 frames_buffer = []
-        
+
         frame_count += 1
 
-    if frames_buffer: #remaining frames
+    if frames_buffer:  # remaining frames
         batch = torch.stack(frames_buffer).to(device)
         with torch.no_grad():
             output = model(batch).flatten(start_dim=1)
@@ -90,25 +98,36 @@ def extract_features_for_video(video_path, model, transform):
 
     if not features_list:
         return None
-    
-    return np.concatenate(features_list, axis=0) #concatenate all batches into 1 long array
-        
+
+    final_features = np.concatenate(features_list, axis=0)
+
+    # expected shape (seconds, 2048)
+    expected_seconds = int(frame_count / fps)
+    # allow leeway +/-2 due to rounding
+    if abs(final_features.shape[0] - expected_seconds) > 5:
+        print(
+            f"warning: {video_path} expected ~{expected_seconds} features, got {final_features.shape[0]}")
+
+    return final_features
+
+
 def main():
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    
-    #standard imagenet parameters
+
+    # standard imagenet parameters
     transform = transforms.Compose([
         transforms.ToPILImage(),
         transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[
+                             0.229, 0.224, 0.225])
     ])
     print("loading resnet50 on device")
     model = get_resnet_feature_extractor()
 
-    #get list of videos
+    # get list of videos
     if not os.path.exists(video_dir):
         print(f"error -  video directory not found at {video_dir}")
         return
@@ -125,15 +144,15 @@ def main():
 
         video_path = os.path.join(video_dir, vid_file)
 
-        #extraction    
+        # extraction
         features = extract_features_for_video(video_path, model, transform)
 
         if features is not None:
-            np.save(save_path, features) #save compressed .npy
+            np.save(save_path, features)  # save compressed .npy
         else:
-            print(f"no features extracted for {vid_file}")    
+            print(f"no features extracted for {vid_file}")
     print(f"done - all features extracted to {output_dir}")
-          
+
 
 if __name__ == "__main__":
     main()
