@@ -1,0 +1,62 @@
+{
+  "Statistical Mean": {
+    "mae_phase": 232.1674762902735,
+    "mae_surgery": 319.2498086657546,
+    "mae_phase_std": 263.3655821088481,
+    "mae_surgery_std": 273.0942407596947,
+    "mae_at_30min": 136.6856854838711,
+    "mae_at_20min": 457.42322205160445,
+    "mae_at_10min": 220.63147950934194,
+    "mae_at_5min": 307.547785402028,
+    "pct_within_5min": 57.096901260504204,
+    "pct_within_10min": 85.72741596638656
+  },
+  "Elapsed Heuristic": {
+    "mae_phase": 247.94628630880212,
+    "mae_surgery": 321.6180655667595,
+    "mae_phase_std": 272.9676753480287,
+    "mae_surgery_std": 296.61876089142044,
+    "mae_at_30min": 216.5156250452914,
+    "mae_at_20min": 425.1478636995547,
+    "mae_at_10min": 325.08229176676366,
+    "mae_at_5min": 239.08149657494644,
+    "pct_within_5min": 59.87394957983193,
+    "pct_within_10min": 81.90651260504201
+  },
+  "Linear Regression": {
+    "mae_phase": 258.33543049153667,
+    "mae_surgery": 421.9994577049207,
+    "mae_phase_std": 246.80368307587347,
+    "mae_surgery_std": 310.8998939883905,
+    "mae_at_30min": 117.33546190922803,
+    "mae_at_20min": 661.7504656467291,
+    "mae_at_10min": 393.9253722842377,
+    "mae_at_5min": 474.9143746064441,
+    "pct_within_5min": 43.28387605042017,
+    "pct_within_10min": 71.22505252100841
+  },
+  "MLP (No Temporal)": {
+    "mae_phase": 221.66603088378906,
+    "mae_surgery": 333.6653747558594,
+    "mae_phase_std": 243.94927978515625,
+    "mae_surgery_std": 296.37774658203125,
+    "mae_at_30min": 545.1441650390625,
+    "mae_at_20min": 343.0261535644531,
+    "mae_at_10min": 240.193603515625,
+    "mae_at_5min": 179.15740966796875,
+    "pct_within_5min": 56.945896497647674,
+    "pct_within_10min": 83.2527443805541
+  },
+  "LSTM (Temporal)": {
+    "mae_phase": 242.66494750976562,
+    "mae_surgery": 350.03533935546875,
+    "mae_phase_std": 285.2069091796875,
+    "mae_surgery_std": 311.4041748046875,
+    "mae_at_30min": 473.9541931152344,
+    "mae_at_20min": 465.2650146484375,
+    "mae_at_10min": 216.785400390625,
+    "mae_at_5min": 274.6076965332031,
+    "pct_within_5min": 53.70929621848739,
+    "pct_within_10min": 82.45141806722688
+  }
+}

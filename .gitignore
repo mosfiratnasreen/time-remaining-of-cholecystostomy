@@ -1,3 +1,5 @@
 .DS_Store
 data/cholec80/
 data/features
+__pycache__
+*.pt

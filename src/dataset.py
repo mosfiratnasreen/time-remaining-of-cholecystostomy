@@ -331,7 +331,7 @@ class TaskADataset(Dataset):
         tool_dir: Path,
         phase_stats: PhaseStatistics,
         normalize_targets: bool = True,
-        sequence_length: int = 1,  # For temporal context
+        sequence_length: int = 10,  # For temporal context
     ):
         self.video_ids = video_ids
         self.features_dir = Path(features_dir)
@@ -368,17 +368,21 @@ class TaskADataset(Dataset):
         
         # === INPUT FEATURES ===
         
-        # Visual features
+        # visual features
         if self.sequence_length == 1:
             features = video.features[t]
         else:
-            start = max(0, t - self.sequence_length + 1)
-            seq = video.features[start:t+1]
-            # Pad if needed
-            if len(seq) < self.sequence_length:
-                pad = np.zeros((self.sequence_length - len(seq), seq.shape[1]))
+            start = t - self.sequence_length + 1
+            if start < 0:
+                # pad at the beginning
+                pad_length = -start
+                start = 0
+                seq = video.features[start:t+1]
+                pad = np.zeros((pad_length, video.features.shape[1]), dtype=np.float32)
                 seq = np.vstack([pad, seq])
-            features = seq
+            else:
+                seq = video.features[start:t+1]
+            features = seq.astype(np.float32)
         
         # Current phase (one-hot)
         phase_idx = video.phases[t]
@@ -644,22 +648,22 @@ class Cholec80DataModule:
         print(f"  Surgery duration: {self.phase_stats.mean_surgery_duration:.1f} ± {self.phase_stats.std_surgery_duration:.1f} seconds")
     
     # task A datasets
-    def get_task_a_train(self) -> TaskADataset:
+    def get_task_a_train(self, sequence_length: int = 10) -> TaskADataset:
         return TaskADataset(
             self.train_videos, self.features_dir, self.phase_dir, 
-            self.tool_dir, self.phase_stats
+            self.tool_dir, self.phase_stats, sequence_length=sequence_length
         )
     
-    def get_task_a_val(self) -> TaskADataset:
+    def get_task_a_val(self, sequence_length: int = 10) -> TaskADataset:
         return TaskADataset(
             self.val_videos, self.features_dir, self.phase_dir,
-            self.tool_dir, self.phase_stats
+            self.tool_dir, self.phase_stats, sequence_length=sequence_length
         )
     
-    def get_task_a_test(self) -> TaskADataset:
+    def get_task_a_test(self, sequence_length: int = 10) -> TaskADataset:
         return TaskADataset(
             self.test_videos, self.features_dir, self.phase_dir,
-            self.tool_dir, self.phase_stats
+            self.tool_dir, self.phase_stats, sequence_length=sequence_length
         )
     
     # Task B datasets
@@ -682,15 +686,15 @@ class Cholec80DataModule:
         )
     
     # dataloaders
-    def task_a_train_loader(self) -> DataLoader:
+    def task_a_train_loader(self, sequence_length: int = 10) -> DataLoader:
         return DataLoader(
-            self.get_task_a_train(), batch_size=self.batch_size,
+            self.get_task_a_train(sequence_length), batch_size=self.batch_size,
             shuffle=True, num_workers=self.num_workers, pin_memory=True
         )
     
-    def task_a_val_loader(self) -> DataLoader:
+    def task_a_val_loader(self, sequence_length: int = 10) -> DataLoader:
         return DataLoader(
-            self.get_task_a_val(), batch_size=self.batch_size,
+            self.get_task_a_val(sequence_length), batch_size=self.batch_size,
             shuffle=False, num_workers=self.num_workers, pin_memory=True
         )
     
