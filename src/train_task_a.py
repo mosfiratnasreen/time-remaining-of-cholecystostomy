@@ -818,9 +818,7 @@ def evaluate_baselines(
 
 def get_device():
     """get the best available device."""
-    if torch.cuda.is_available():
-        return torch.device('cuda')
-    elif torch.backends.mps.is_available():
+    if torch.backends.mps.is_available():
         return torch.device('mps')
     else:
         return torch.device('cpu')
@@ -836,22 +834,22 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     
     device = get_device()
-    print(f"Using device: {device}")
+    print(f"using device: {device}")
     
     # create data module
     print("\n" + "=" * 70)
-    print("Loading Data")
+    print("loading data")
     print("=" * 70)
     
     data_module = Cholec80DataModule(
         data_dir=data_dir,
         batch_size=64,
-        num_workers=0  # Set to 0 for MPS compatibility
+        num_workers=0  #0 for MPS compatibility
     )
     
     # evaluate baselines first
     print("\n" + "=" * 70)
-    print("Evaluating Baselines")
+    print("evaluating baselines")
     print("=" * 70)
     
     baseline_results = evaluate_baselines(data_module, device)
@@ -863,7 +861,7 @@ def main():
     
     # train MLP model
     print("\n" + "=" * 70)
-    print("Training MLP Model (No Temporal Context)")
+    print("training MLP model (no temporal context)")
     print("=" * 70)
     
     mlp_model = MLPModel(hidden_dim=512, dropout=0.4)
@@ -884,17 +882,17 @@ def main():
     
     # train LSTM model
     print("\n" + "=" * 70)
-    print("Training LSTM Model (Temporal Context)")
+    print("training LSTM model (temporal context)")
     print("=" * 70)
     
-    lstm_model = LSTMModel(hidden_dim=512, lstm_layers=2, dropout=0.4, bidirectional=True)
+    lstm_model = LSTMModel(hidden_dim=256, lstm_layers=1, dropout=0.3, bidirectional=False)
     lstm_trainer = Trainer(
         model=lstm_model,
-        train_loader=data_module.task_a_train_loader(sequence_length=10),
-        val_loader=data_module.task_a_val_loader(sequence_length=10),
+        train_loader=data_module.task_a_train_loader(sequence_length=30),
+        val_loader=data_module.task_a_val_loader(sequence_length=30),
         phase_stats=data_module.phase_stats,
         device=device,
-        learning_rate=5e-5,
+        learning_rate=1e-4,
         output_dir=output_dir / "lstm"
     )
     
@@ -924,13 +922,13 @@ def main():
             metrics.pct_within_5min or 0
         ))
 
-    # Stratified analysis: Short vs Long surgeries
+    # short vs long surgeries
     print("\n" + "=" * 70)
     print("STRATIFIED ANALYSIS (LSTM Model)")
     print("=" * 70)
     
-    # Reload best LSTM model and evaluate on test set
-    test_loader = data_module.task_a_val_loader(sequence_length=10)
+    # best LSTM model and evaluate on test set
+    test_loader = data_module.task_a_val_loader(sequence_length=30)
     
     lstm_model.eval()
     all_errors = []
@@ -942,7 +940,7 @@ def main():
                     for k, v in batch.items()}
             pred = lstm_model(batch)
             
-            # Denormalize
+            # denormalise
             pred_surgery = pred['remaining_surgery'].cpu().numpy()
             phase_idx = batch['phase_idx'].cpu().numpy()
             for i, p_idx in enumerate(phase_idx):
@@ -958,7 +956,7 @@ def main():
     all_errors = np.array(all_errors)
     all_rsd_raw = np.array(all_rsd_raw)
     
-    # Stratify by remaining time
+    # stratify by remaining time
     print("\nMAE by time remaining until surgery end:")
     for threshold, label in [(600, "< 10 min"), (1200, "10-20 min"), (1800, "20-30 min"), (3600, "30-60 min"), (float('inf'), "> 60 min")]:
         if threshold == 600:
@@ -978,7 +976,7 @@ def main():
     with open(output_dir / "results.json", 'w') as f:
         json.dump(results_dict, f, indent=2)
     
-    print(f"\nResults saved to {output_dir}")
+    print(f"\nresults saved to {output_dir}")
     
     return all_results
 
