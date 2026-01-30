@@ -1,0 +1,75 @@
+{
+  "summary": [
+    {
+      "tool": "Grasper",
+      "appearances": 643,
+      "predicted": 43,
+      "coverage": 6.6874027993779155,
+      "mean_lead": 67.04651162790698,
+      "min_lead": 3,
+      "max_lead": 119
+    },
+    {
+      "tool": "Bipolar",
+      "appearances": 28,
+      "predicted": 12,
+      "coverage": 42.857142857142854,
+      "mean_lead": 74.5,
+      "min_lead": 10,
+      "max_lead": 118
+    },
+    {
+      "tool": "Hook",
+      "appearances": 249,
+      "predicted": 145,
+      "coverage": 58.23293172690763,
+      "mean_lead": 87.62068965517241,
+      "min_lead": 7,
+      "max_lead": 119
+    },
+    {
+      "tool": "Scissors",
+      "appearances": 13,
+      "predicted": 13,
+      "coverage": 100.0,
+      "mean_lead": 102.15384615384616,
+      "min_lead": 62,
+      "max_lead": 119
+    },
+    {
+      "tool": "Clipper",
+      "appearances": 33,
+      "predicted": 23,
+      "coverage": 69.6969696969697,
+      "mean_lead": 89.56521739130434,
+      "min_lead": 63,
+      "max_lead": 119
+    },
+    {
+      "tool": "Irrigator",
+      "appearances": 70,
+      "predicted": 54,
+      "coverage": 77.14285714285715,
+      "mean_lead": 94.53703703703704,
+      "min_lead": 15,
+      "max_lead": 119
+    },
+    {
+      "tool": "SpecimenBag",
+      "appearances": 44,
+      "predicted": 34,
+      "coverage": 77.27272727272727,
+      "mean_lead": 96.97058823529412,
+      "min_lead": 50,
+      "max_lead": 119
+    }
+  ],
+  "overall": {
+    "mean_lead_time": 87.25925925925925,
+    "median_lead_time": 96.0,
+    "excellent_pct": 80.24691358024691,
+    "good_pct": 10.802469135802468,
+    "marginal_pct": 6.481481481481481,
+    "insufficient_pct": 2.4691358024691357
+  }
+}
