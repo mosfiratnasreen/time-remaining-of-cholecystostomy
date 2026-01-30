@@ -40,7 +40,7 @@ class StatisticalBaseline:
     """
     predict mean remaining time based on current phase.
     
-    for remaining phase time: mean_phase_duration / 2 (assume we're halfway)
+    for remaining phase time: mean_phase_duration / 2 (assume halfway)
     for RSD: remaining_phase + sum of future phase means
     """
     
@@ -161,7 +161,7 @@ class LinearRegressionBaseline(nn.Module):
 ###################################################################################################################################
 # deep learning models
 ###################################################################################################################################
-
+# DL method 1 
 class MLPModel(nn.Module):
     """
     MLP model: visual features + phase + elapsed time → predictions
@@ -171,24 +171,29 @@ class MLPModel(nn.Module):
     def __init__(
         self,
         feature_dim: int = 2048,
-        hidden_dim: int = 256,
-        dropout: float = 0.3
+        hidden_dim: int = 1024,
+        dropout: float = 0.2,
+        num_blocks: int = 4
     ):
         super().__init__()
-        self.name = "MLP (No Temporal)"
+        self.name = "MLP (deeper)"
         
         # input dimension: features + phase_onehot + elapsed_phase + elapsed_surgery
         input_dim = feature_dim + NUM_PHASES + 2
-        
-        # shared encoder
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-        )
+
+        self.input_proj = nn.Linear(input_dim, hidden_dim) #initial projection
+        self.ln1 = nn.LayerNorm(hidden_dim)
+
+        self.blocks = nn.ModuleList() #multiple residual blocks
+        self.layer_norms = nn.ModuleList()
+        for _ in range(num_blocks):
+            self.blocks.append(nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, hidden_dim),
+            ))
+            self.layer_norms.append(nn.LayerNorm(hidden_dim))
         
         # output heads
         self.head_remaining_phase = nn.Linear(hidden_dim, 1)
@@ -204,14 +209,17 @@ class MLPModel(nn.Module):
             batch['elapsed_surgery'].unsqueeze(-1)
         ], dim=-1)
         
-        # encode
-        h = self.encoder(x)
+        h = F.relu(self.ln1(self.input_proj(x))) #initial projection with norm layer
+
+        for block, ln in zip(self.blocks, self.layer_norms):
+            h = ln(h + block(h))
+            h = F.relu(h)
         
         # predictions (ReLU ensures positive times)
         remaining_phase = F.relu(self.head_remaining_phase(h)).squeeze(-1)
         remaining_surgery = F.relu(self.head_remaining_surgery(h)).squeeze(-1)
         future_phases = self.head_future_phases(h).view(-1, NUM_PHASES, 2)
-        future_phases = F.relu(future_phases)  # Times should be positive
+        future_phases = F.relu(future_phases)  # times should be positive
         
         return {
             'remaining_phase': remaining_phase,
@@ -219,7 +227,7 @@ class MLPModel(nn.Module):
             'future_phases': future_phases
         }
 
-
+# DL method 2
 class LSTMModel(nn.Module):
     """
     LSTM model: temporal visual features + phase + elapsed time → predictions
@@ -316,9 +324,8 @@ class LSTMModel(nn.Module):
 
 
 ###################################################################################################################################
-# loss functions
+# loss function
 ###################################################################################################################################
-
 class TaskALoss(nn.Module):
     """
     multi-task loss for task A.
@@ -327,9 +334,9 @@ class TaskALoss(nn.Module):
     
     def __init__(
         self,
-        lambda_phase: float = 1.0,
-        lambda_surgery: float = 1.0,
-        lambda_future: float = 0.5,
+        lambda_phase: float = 0.5,
+        lambda_surgery: float = 5.0,
+        lambda_future: float = 0.3,
         use_huber: bool = True
     ):
         super().__init__()
@@ -350,15 +357,31 @@ class TaskALoss(nn.Module):
         """
         returns total loss and dictionary of individual losses for logging.
         """
-        loss_phase = self.criterion(
+        # original absolute loss
+        loss_phase_abs = self.criterion(
             predictions['remaining_phase'],
             targets['remaining_phase']
         )
-        
-        loss_surgery = self.criterion(
+
+        loss_surgery_abs = self.criterion(
             predictions['remaining_surgery'],
             targets['remaining_surgery']
         )
+
+        # percentage-aware component (scale-invariant)
+        eps = 0.1  # avoid division by zero
+        loss_phase_pct = torch.mean(
+            torch.abs(predictions['remaining_phase'] - targets['remaining_phase']) / 
+            (targets['remaining_phase'] + eps)
+        )
+        loss_surgery_pct = torch.mean(
+            torch.abs(predictions['remaining_surgery'] - targets['remaining_surgery']) / 
+            (targets['remaining_surgery'] + eps)
+        )
+
+        # combine: 70% absolute error + 30% percentage error
+        loss_phase = 0.7 * loss_phase_abs + 0.3 * loss_phase_pct
+        loss_surgery = 0.7 * loss_surgery_abs + 0.3 * loss_surgery_pct
         
         # future phases loss (only on the time values, columns 1 and 2)
         # column 0 is "will occur" flag which we don't predict
@@ -489,10 +512,105 @@ def evaluate_predictions(
     return metrics
 
 
+def analyse_per_phase_performance(
+    model: nn.Module,
+    data_module: Cholec80DataModule,
+    device: torch.device,
+    output_dir: Path
+):
+    """analyse model performance broken down by surgical phase."""
+    
+    model.eval()
+    val_loader = data_module.task_a_val_loader(sequence_length=1)
+    
+    # collect predictions by phase
+    phase_errors = {phase: {'phase': [], 'surgery': []} for phase in PHASES}
+    
+    with torch.no_grad():
+        for batch in tqdm(val_loader, desc="Analysing per-phase"):
+            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
+                    for k, v in batch.items()}
+            
+            predictions = model(batch)
+            
+            # denormalise predictions
+            pred_phase = predictions['remaining_phase'].cpu().numpy()
+            pred_surgery = predictions['remaining_surgery'].cpu().numpy()
+            phase_idx = batch['phase_idx'].cpu().numpy()
+            
+            for i, p_idx in enumerate(phase_idx):
+                phase_name = IDX_TO_PHASE[p_idx]
+                pred_phase[i] *= data_module.phase_stats.mean_durations[phase_name]
+                pred_surgery[i] *= data_module.phase_stats.mean_surgery_duration
+            
+            true_phase = batch['remaining_phase_raw'].cpu().numpy()
+            true_surgery = batch['remaining_surgery_raw'].cpu().numpy()
+            
+            # store errors by phase
+            for i, p_idx in enumerate(phase_idx):
+                phase_name = IDX_TO_PHASE[p_idx]
+                phase_errors[phase_name]['phase'].append(abs(pred_phase[i] - true_phase[i]))
+                phase_errors[phase_name]['surgery'].append(abs(pred_surgery[i] - true_surgery[i]))
+    
+    # print results
+    print("\n" + "=" * 70)
+    print("PER-PHASE PERFORMANCE ANALYSIS")
+    print("=" * 70)
+    
+    print(f"\n{'Phase':<30} {'MAE Phase (s)':>15} {'MAE Surgery (s)':>15} {'N samples':>12}")
+    print("-" * 75)
+    
+    phase_mae_data = []
+    for phase in PHASES:
+        if phase_errors[phase]['phase']:
+            mae_phase = np.mean(phase_errors[phase]['phase'])
+            mae_surgery = np.mean(phase_errors[phase]['surgery'])
+            n = len(phase_errors[phase]['phase'])
+            phase_mae_data.append({
+                'phase': phase,
+                'mae_phase': mae_phase,
+                'mae_surgery': mae_surgery,
+                'n': n
+            })
+            print(f"{phase:<30} {mae_phase:>14.1f}s {mae_surgery:>14.1f}s {n:>12}")
+    
+    # identify hardest/easiest phases
+    sorted_by_surgery = sorted(phase_mae_data, key=lambda x: x['mae_surgery'])
+    
+    print(f"\n  Easiest phase (lowest MAE): {sorted_by_surgery[0]['phase']} ({sorted_by_surgery[0]['mae_surgery']/60:.1f} min)")
+    print(f"  Hardest phase (highest MAE): {sorted_by_surgery[-1]['phase']} ({sorted_by_surgery[-1]['mae_surgery']/60:.1f} min)")
+    
+    # plot
+    fig, ax = plt.subplots(figsize=(12, 5))
+    
+    phases_short = [p[:15] for p in PHASES]
+    mae_values = [np.mean(phase_errors[p]['surgery'])/60 if phase_errors[p]['surgery'] else 0 for p in PHASES]
+    
+    colors = ['green' if m < 5 else 'orange' if m < 8 else 'red' for m in mae_values]
+    bars = ax.bar(phases_short, mae_values, color=colors, edgecolor='black')
+    
+    ax.axhline(y=5, color='green', linestyle='--', linewidth=2, label='Good (<5 min)')
+    ax.axhline(y=8, color='orange', linestyle='--', linewidth=2, label='Acceptable (<8 min)')
+    
+    ax.set_xlabel('Surgical Phase')
+    ax.set_ylabel('MAE (minutes)')
+    ax.set_title('Remaining Surgery Duration Prediction Error by Phase')
+    ax.set_xticklabels(phases_short, rotation=45, ha='right')
+    ax.legend()
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / 'per_phase_mae.png', dpi=150)
+    plt.close()
+    
+    print(f"\n  Per-phase analysis saved to {output_dir / 'per_phase_mae.png'}")
+    return phase_mae_data
+
+
+
 ###################################################################################################################################
 # training loop
 ###################################################################################################################################
-
 class Trainer:
     """training manager for task A models."""
     
@@ -514,7 +632,7 @@ class Trainer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        self.optimizer = Adam(model.parameters(), lr=learning_rate)
+        self.optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
         self.scheduler = ReduceLROnPlateau(
             self.optimizer, mode='min', factor=0.5, patience=5
         )
@@ -616,14 +734,13 @@ class Trainer:
         metrics = evaluate_predictions(
             predictions_dict, targets_dict, np.array(all_rsd_raw)
         )
-        
         return avg_losses, metrics
-    
+
     def train(self, num_epochs: int = 50, early_stop_patience: int = 10):
         """full training loop."""
-        print(f"\nTraining {self.model.name} for {num_epochs} epochs...")
-        print(f"Train samples: {len(self.train_loader.dataset)}")
-        print(f"Val samples: {len(self.val_loader.dataset)}")
+        print(f"\ntraining {self.model.name} for {num_epochs} epochs...")
+        print(f"train samples: {len(self.train_loader.dataset)}")
+        print(f"validation samples: {len(self.val_loader.dataset)}")
         
         patience_counter = 0
         
@@ -640,24 +757,24 @@ class Trainer:
             self.scheduler.step(val_losses['loss_total'])
             
             # logging
-            print(f"\nEpoch {epoch+1}/{num_epochs}")
-            print(f"  Train Loss: {train_losses['loss_total']:.4f}")
-            print(f"  Val Loss:   {val_losses['loss_total']:.4f}")
-            print(f"  Val MAE (surgery): {metrics.mae_surgery/60:.2f} min")
-            print(f"  Val MAE (phase):   {metrics.mae_phase/60:.2f} min")
+            # print(f"\nepoch {epoch+1}/{num_epochs}")
+            # print(f"  train Loss: {train_losses['loss_total']:.4f}")
+            # print(f"  validation Loss:   {val_losses['loss_total']:.4f}")
+            # print(f"  validation MAE (surgery): {metrics.mae_surgery/60:.2f} min")
+            # print(f"  validation MAE (phase):   {metrics.mae_phase/60:.2f} min")
             
             # save best model
             if val_losses['loss_total'] < self.best_val_loss:
                 self.best_val_loss = val_losses['loss_total']
                 self.save_checkpoint('best_model.pt')
                 patience_counter = 0
-                print("  → New best model saved!")
+                print(" new best model saved!")
             else:
                 patience_counter += 1
             
             # early stopping
             if patience_counter >= early_stop_patience:
-                print(f"\nEarly stopping at epoch {epoch+1}")
+                print(f"\nearly stopping at epoch {epoch+1}")
                 break
         
         # load best model for final evaluation
@@ -665,7 +782,6 @@ class Trainer:
         
         # plot training curves
         self.plot_training_curves()
-        
         return self.validate()
     
     def save_checkpoint(self, filename: str):
@@ -673,7 +789,7 @@ class Trainer:
         path = self.output_dir / filename
         torch.save({
             'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
+            'optimiser_state_dict': self.optimizer.state_dict(),
             'best_val_loss': self.best_val_loss,
             'train_losses': self.train_losses,
             'val_losses': self.val_losses
@@ -713,7 +829,7 @@ def evaluate_baselines(
     val_dataset = data_module.get_task_a_val()
     
     # collect all validation data
-    print("\nCollecting validation data for baseline evaluation...")
+    print("\ncollecting validation data for baseline evaluation...")
     all_phase_idx = []
     all_elapsed_phase = []
     all_true_phase = []
@@ -746,19 +862,19 @@ def evaluate_baselines(
     }
     
     # baseline 1: statistical mean
-    print("\nEvaluating Statistical Mean baseline...")
+    print("\nevaluating Statistical Mean baseline...")
     baseline1 = StatisticalBaseline(data_module.phase_stats)
     pred1 = baseline1.predict(all_phase_idx)
     results[baseline1.name] = evaluate_predictions(pred1, targets, all_rsd_raw)
     
     # baseline 2: elapsed heuristic
-    print("Evaluating Elapsed Heuristic baseline...")
+    print("evaluating Elapsed Heuristic baseline...")
     baseline2 = ElapsedHeuristicBaseline(data_module.phase_stats)
     pred2 = baseline2.predict(all_phase_idx, all_elapsed_phase)
     results[baseline2.name] = evaluate_predictions(pred2, targets, all_rsd_raw)
     
     # baseline 3: linear regression
-    print("Training Linear Regression baseline...")
+    print("training Linear Regression baseline...")
     linear_model = LinearRegressionBaseline().to(device)
     linear_optimizer = Adam(linear_model.parameters(), lr=1e-3)
     
@@ -808,14 +924,12 @@ def evaluate_baselines(
         'remaining_surgery': np.array(all_pred_surgery)
     }
     results[linear_model.name] = evaluate_predictions(pred3, targets, all_rsd_raw)
-    
     return results
 
 
 ###################################################################################################################################
 # main training
 ###################################################################################################################################
-
 def get_device():
     """get the best available device."""
     if torch.backends.mps.is_available():
@@ -864,7 +978,7 @@ def main():
     print("training MLP model (no temporal context)")
     print("=" * 70)
     
-    mlp_model = MLPModel(hidden_dim=512, dropout=0.4)
+    mlp_model = MLPModel(hidden_dim=1024, dropout=0.2)
     mlp_trainer = Trainer(
         model=mlp_model,
         train_loader=data_module.task_a_train_loader(sequence_length=1),
@@ -875,7 +989,7 @@ def main():
         output_dir=output_dir / "mlp"
     )
     
-    _, mlp_metrics = mlp_trainer.train(num_epochs=50, early_stop_patience=15)
+    _, mlp_metrics = mlp_trainer.train(num_epochs=100, early_stop_patience=20)
     
     print("\n--- MLP Results ---")
     print(mlp_metrics)
@@ -885,18 +999,18 @@ def main():
     print("training LSTM model (temporal context)")
     print("=" * 70)
     
-    lstm_model = LSTMModel(hidden_dim=256, lstm_layers=1, dropout=0.3, bidirectional=False)
+    lstm_model = LSTMModel(hidden_dim=512, lstm_layers=2, dropout=0.3, bidirectional=True)
     lstm_trainer = Trainer(
         model=lstm_model,
-        train_loader=data_module.task_a_train_loader(sequence_length=30),
-        val_loader=data_module.task_a_val_loader(sequence_length=30),
+        train_loader=data_module.task_a_train_loader(sequence_length=60),
+        val_loader=data_module.task_a_val_loader(sequence_length=60),
         phase_stats=data_module.phase_stats,
         device=device,
-        learning_rate=1e-4,
+        learning_rate=5e-5,
         output_dir=output_dir / "lstm"
     )
     
-    _, lstm_metrics = lstm_trainer.train(num_epochs=50, early_stop_patience=15)
+    _, lstm_metrics = lstm_trainer.train(num_epochs=100, early_stop_patience=25)
     
     print("\n--- LSTM Results ---")
     print(lstm_metrics)
@@ -928,7 +1042,7 @@ def main():
     print("=" * 70)
     
     # best LSTM model and evaluate on test set
-    test_loader = data_module.task_a_val_loader(sequence_length=30)
+    test_loader = data_module.task_a_val_loader(sequence_length=60)
     
     lstm_model.eval()
     all_errors = []
@@ -977,7 +1091,18 @@ def main():
         json.dump(results_dict, f, indent=2)
     
     print(f"\nresults saved to {output_dir}")
+
+    #per phase analysis on best model MLP
+    print("\n" + "=" * 70)
+    print("PER-PHASE ANALYSIS (MLP Model)")
+    print("=" * 70)
     
+    phase_analysis = analyse_per_phase_performance(
+        model=mlp_model,
+        data_module=data_module,
+        device=device,
+        output_dir=output_dir / "mlp"
+    )
     return all_results
 
 ###################################################################################################################################
