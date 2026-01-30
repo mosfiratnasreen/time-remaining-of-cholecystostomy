@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 
-# config - adjust these paths to match your setup
+# config
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data" / "cholec80"
 PHASE_DIR = DATA_DIR / "phase_annotations"
@@ -297,7 +297,7 @@ def plot_transition_matrices(transition_stats: dict):
     """plots tool transition matrices at different time horizons."""
     fig, axes = plt.subplots(2, 2, figsize=(14, 12))
     axes = axes.flatten()
-    
+
     for ax, (horizon, matrix) in zip(axes, transition_stats.items()):
         sns.heatmap(matrix, annot=True, fmt='.2f', cmap='Blues', ax=ax,
                     vmin=0, vmax=1, cbar_kws={'label': 'Probability'})
@@ -318,7 +318,7 @@ def analyse_anticipation_task_design(new_tool_events: dict, all_dfs: list):
     print("\n=== Tool Anticipation Task Design Analysis ===")
     
     # how often new tools appear
-    print("\n1. New Tool Appearance Events:")
+    print("\nNew Tool Appearance Events:")
     for tool in TOOLS:
         events = new_tool_events[tool]
         print(f"  {tool}: {len(events)} appearances across 80 videos")
@@ -328,7 +328,7 @@ def analyse_anticipation_task_design(new_tool_events: dict, all_dfs: list):
             print(f"    Most common phases: {phase_counts.head(3).to_dict()}")
     
     # how often tools change
-    print("\n2. Tool Set Change Frequency:")
+    print("\nTool Set Change Frequency:")
     change_intervals = []
     for df in all_dfs:
         df['tool_combo'] = df.apply(compute_tool_combination, axis=1)
@@ -361,7 +361,7 @@ def main():
     all_stats = []
     all_dfs = []
     
-    print("\nLoading and analysing videos...")
+    print("\nloading and analysing videos...")
     for video_id in range(1, 81):
         try:
             stats, df = analyse_single_video(video_id)
@@ -372,11 +372,11 @@ def main():
         except Exception as e:
             print(f"  Error processing video {video_id}: {e}")
     
-    print(f"\nSuccessfully loaded {len(all_stats)} videos")
+    print(f"\nsuccessfully loaded {len(all_stats)} videos")
     
     # generate visualisation and statistics
     print("\n" + "=" * 60)
-    print("Generating Statistics and Visualisations")
+    print("generating Statistics and visualisations...")
     print("=" * 60)
     
     # srugery duration distribution
@@ -391,12 +391,12 @@ def main():
     print(tool_phase_matrix.round(2).to_string())
     
     # tool transitions
-    print("\nAnalyzing tool transitions...")
+    print("\nanalysing tool transitions...")
     transition_stats = analyse_tool_transitions(all_dfs)
     plot_transition_matrices(transition_stats)
     
     # new tool events
-    print("\nAnalyzing new tool appearance events...")
+    print("\nanalysing new tool appearance events...")
     new_tool_events = analyse_new_tool_events(all_dfs)
     
     # task design analysis
@@ -421,6 +421,8 @@ def main():
     
     return all_stats, all_dfs, transition_stats, new_tool_events
 
-
+###################################################################################################################################
+###################################################################################################################################
+###################################################################################################################################
 if __name__ == "__main__":
     all_stats, all_dfs, transition_stats, new_tool_events = main()
