@@ -1,5 +1,5 @@
 """
-Cholec80 Dataset for Task A: Remaining Time Prediction
+Cholec80 dataset for task A: remaining time prediction
 
 This module predicts:
 1. Remaining time in current surgical phase
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass, field
 import json
+from tqdm import tqdm
 
 
 ###################################################################################################################################
@@ -41,27 +42,24 @@ PHASE_TO_IDX = {phase: idx for idx, phase in enumerate(PHASES)}
 IDX_TO_PHASE = {idx: phase for phase, idx in PHASE_TO_IDX.items()}
 
 # standard train/test split (following Cholec80 convention)
-TRAIN_VIDEOS = list(range(1, 41))   # Videos 1-40
-TEST_VIDEOS = list(range(41, 81))   # Videos 41-80
+TRAIN_VIDEOS = list(range(1, 41))   # videos 1-40
+TEST_VIDEOS = list(range(41, 81))   # 41-80
 
 
 ####################################################################################################################################
 # data loading
 ####################################################################################################################################
-
 def load_phase_annotations(phase_dir: Path, video_id: int) -> pd.DataFrame:
     """loads phase annotations for a video."""
     filename = phase_dir / f"video{video_id:02d}-phase.txt"
     df = pd.read_csv(filename, sep='\t')
     return df
 
-
 def load_tool_annotations(tool_dir: Path, video_id: int) -> pd.DataFrame:
     """loads tool annotations for a video."""
     filename = tool_dir / f"video{video_id:02d}-tool.txt"
     df = pd.read_csv(filename, sep='\t')
     return df
-
 
 def load_features(features_dir: Path, video_id: int) -> np.ndarray:
     """loads pre-extracted ResNet features for a video."""
@@ -70,9 +68,8 @@ def load_features(features_dir: Path, video_id: int) -> np.ndarray:
 
 
 ###################################################################################################################################
-# statistics computed from training set 
+# stats computed from training set 
 ###################################################################################################################################
-
 @dataclass
 class PhaseStatistics:
     """
@@ -146,7 +143,6 @@ class PhaseStatistics:
 ###################################################################################################################################
 # video data container with phase timeline
 ###################################################################################################################################
-
 @dataclass
 class PhaseSegment:
     """represents a single phase segment in a surgery."""
@@ -156,13 +152,11 @@ class PhaseSegment:
     end_time: float    # seconds
     duration: float    # seconds
 
-
 class VideoData:
     """
     container for all data from a single video, aligned to 1fps.
     includes phase timeline for computing remaining times.
     """
-    
     def __init__(
         self,
         video_id: int,
@@ -237,7 +231,7 @@ class VideoData:
         for i, seg in enumerate(self.phase_segments):
             if seg.start_time <= t < seg.end_time:
                 return i
-        return len(self.phase_segments) - 1  # Return last if past end
+        return len(self.phase_segments) - 1  # return last if past end
     
     def get_remaining_phase_time(self, t: int) -> float:
         """get remaining time in current phase at time t (seconds)."""
@@ -265,8 +259,8 @@ class VideoData:
         future_times = {}
         
         for i, seg in enumerate(self.phase_segments):
-            if i >= current_seg_idx:  # Current and future phases
-                # Convert to time relative to t
+            if i >= current_seg_idx:  # current and future phases
+                # convert to time relative to t
                 rel_start = max(0.0, seg.start_time - t)
                 rel_end = max(0.0, seg.end_time - t)
                 future_times[seg.phase_name] = (rel_start, rel_end)
@@ -280,8 +274,6 @@ class VideoData:
             - [:, 0]: will this phase occur? (0 or 1)
             - [:, 1]: relative start time (seconds from now, 0 if current/past)
             - [:, 2]: relative end time (seconds from now)
-        
-        this format allows predicting all future phase times in one output.
         """
         result = np.zeros((NUM_PHASES, 3), dtype=np.float32)
         current_seg_idx = self.get_current_segment_idx(t)
@@ -289,38 +281,35 @@ class VideoData:
         for i, seg in enumerate(self.phase_segments):
             phase_idx = seg.phase_idx
             
-            if i > current_seg_idx:  # Future phase
-                result[phase_idx, 0] = 1.0  # Will occur
-                result[phase_idx, 1] = seg.start_time - t  # Relative start
-                result[phase_idx, 2] = seg.end_time - t    # Relative end
-            elif i == current_seg_idx:  # Current phase
-                result[phase_idx, 0] = 1.0  # Currently occurring
-                result[phase_idx, 1] = 0.0  # Already started
-                result[phase_idx, 2] = seg.end_time - t  # Relative end
-            # Past phases remain zeros
-        
+            if i > current_seg_idx:  # future phase
+                result[phase_idx, 0] = 1.0  # will occur
+                result[phase_idx, 1] = seg.start_time - t  # relative start
+                result[phase_idx, 2] = seg.end_time - t    # relative end
+            elif i == current_seg_idx:  # current phase
+                result[phase_idx, 0] = 1.0  # currently occurring
+                result[phase_idx, 1] = 0.0  # started
+                result[phase_idx, 2] = seg.end_time - t  # relative end
+            # previous phases remain zeros
         return result
 
 ###################################################################################################################################
-# Task A Dataset: Remaining Time Prediction
-# ============================================================================
-
+# task A dataset: remaining time prediction
+# ###################################################################################################################################
 class TaskADataset(Dataset):
     """
-    Dataset for Task A: Remaining Time Prediction
+    dataset for task A
+    for each sample at time t:
     
-    For each sample at time t:
-    
-    Inputs:
+    input:
         - features: ResNet visual features (2048-dim)
-        - phase: Current phase (one-hot or index)
-        - elapsed_time: Time elapsed in current phase
-        - surgery_progress: Fraction of surgery completed (proxy)
+        - phase: current phase
+        - elapsed_time: time elapsed in current phase
+        - surgery_progress: fraction of surgery completed
     
-    Targets:
-        - remaining_phase_time: Time until current phase ends
-        - remaining_surgery_time: Time until surgery ends (RSD)
-        - future_phases: Tensor of (will_occur, start_time, end_time) for each phase
+    target:
+        - remaining_phase_time: time until current phase ends
+        - remaining_surgery_time: time until surgery ends (RSD)
+        - future_phases: tensor of (will_occur, start_time, end_time) for each phase
     """
     
     def __init__(
@@ -331,7 +320,7 @@ class TaskADataset(Dataset):
         tool_dir: Path,
         phase_stats: PhaseStatistics,
         normalize_targets: bool = True,
-        sequence_length: int = 10,  # For temporal context
+        sequence_length: int = 10,  # temporal context
     ):
         self.video_ids = video_ids
         self.features_dir = Path(features_dir)
@@ -341,23 +330,22 @@ class TaskADataset(Dataset):
         self.normalize_targets = normalize_targets
         self.sequence_length = sequence_length
         
-        # Load all videos
+        # load all videos
         self.videos: List[VideoData] = []
-        print(f"Loading {len(video_ids)} videos...")
+        print(f"loading {len(video_ids)} videos...")
         for vid_id in video_ids:
             video = VideoData(vid_id, features_dir, phase_dir, tool_dir)
             self.videos.append(video)
         
-        # Build sample index: (video_idx, time)
+        # sample index: (video_idx, time)
         self.index_map: List[Tuple[int, int]] = []
         for video_idx, video in enumerate(self.videos):
-            # Valid time range
+            # valid time range
             start_t = self.sequence_length - 1
-            end_t = video.duration - 1  # Need at least 1 second remaining
+            end_t = video.duration - 1  # at least 1 second remaining
             for t in range(start_t, end_t):
                 self.index_map.append((video_idx, t))
-        
-        print(f"Created Task A dataset: {len(self.index_map)} samples from {len(video_ids)} videos")
+        # print(f"created task A dataset: {len(self.index_map)} samples from {len(video_ids)} videos")
     
     def __len__(self) -> int:
         return len(self.index_map)
@@ -365,9 +353,7 @@ class TaskADataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         video_idx, t = self.index_map[idx]
         video = self.videos[video_idx]
-        
-        # === INPUT FEATURES ===
-        
+
         # visual features
         if self.sequence_length == 1:
             features = video.features[t]
@@ -384,43 +370,40 @@ class TaskADataset(Dataset):
                 seq = video.features[start:t+1]
             features = seq.astype(np.float32)
         
-        # Current phase (one-hot)
+        # current phase (one-hot)
         phase_idx = video.phases[t]
         phase_onehot = np.zeros(NUM_PHASES, dtype=np.float32)
         phase_onehot[phase_idx] = 1.0
         
-        # Elapsed time in current phase
+        # elapsed time in current phase
         elapsed_phase = video.get_elapsed_phase_time(t)
         
-        # Elapsed surgery time (proxy for progress since we don't know total duration at inference)
+        # elapsed surgery time (proxy for progress since we don't know total duration at inference)
         elapsed_surgery = float(t)
         
-        # === TARGET VALUES ===
-        
-        # Remaining time in current phase
+        # TARGET VALUES
+        # remaining time in current phase
         remaining_phase = video.get_remaining_phase_time(t)
         
-        # Remaining surgery time (RSD)
+        # RSD
         remaining_surgery = video.get_remaining_surgery_time(t)
         
-        # Future phase times
+        # future phase times
         future_phases = video.get_upcoming_phases_tensor(t)
         
-        # === NORMALIZATION ===
-        
         if self.normalize_targets:
-            # Normalize by reference statistics
+            # normalise by reference statistics
             phase_name = IDX_TO_PHASE[phase_idx]
             mean_phase_dur = self.phase_stats.mean_durations.get(phase_name, 300.0)
             mean_surgery_dur = self.phase_stats.mean_surgery_duration
             
-            # Normalize times (keep scale reasonable, e.g., divide by mean)
+            # normalise times
             elapsed_phase_norm = elapsed_phase / max(mean_phase_dur, 1.0)
             elapsed_surgery_norm = elapsed_surgery / max(mean_surgery_dur, 1.0)
             remaining_phase_norm = remaining_phase / max(mean_phase_dur, 1.0)
             remaining_surgery_norm = remaining_surgery / max(mean_surgery_dur, 1.0)
-            
-            # Normalize future phase times by mean surgery duration
+
+            # normalise future phase times by mean surgery duration
             future_phases_norm = future_phases.copy()
             future_phases_norm[:, 1:] = future_phases[:, 1:] / max(mean_surgery_dur, 1.0)
         else:
@@ -431,43 +414,34 @@ class TaskADataset(Dataset):
             future_phases_norm = future_phases
         
         return {
-            # Inputs
+            # input
             'features': torch.tensor(features, dtype=torch.float32),
             'phase_onehot': torch.tensor(phase_onehot, dtype=torch.float32),
             'phase_idx': torch.tensor(phase_idx, dtype=torch.long),
             'elapsed_phase': torch.tensor(elapsed_phase_norm, dtype=torch.float32),
             'elapsed_surgery': torch.tensor(elapsed_surgery_norm, dtype=torch.float32),
             
-            # Targets
+            # target
             'remaining_phase': torch.tensor(remaining_phase_norm, dtype=torch.float32),
             'remaining_surgery': torch.tensor(remaining_surgery_norm, dtype=torch.float32),
             'future_phases': torch.tensor(future_phases_norm, dtype=torch.float32),
             
-            # Raw values (for evaluation)
+            # raw values
             'remaining_phase_raw': torch.tensor(remaining_phase, dtype=torch.float32),
             'remaining_surgery_raw': torch.tensor(remaining_surgery, dtype=torch.float32),
             
-            # Metadata
+            # metadata
             'video_id': video.video_id,
             'time': t,
         }
 
 
-# ============================================================================
-# Task B Dataset: Tool Anticipation (uses Task A predictions)
-# ============================================================================
-
+###################################################################################################################################
+# task B dataset: tool anticipation using task A predictions
+###################################################################################################################################
 class TaskBDataset(Dataset):
     """
-    Dataset for Task B: Tool Anticipation
-    
-    Two modes:
-    1. Baseline: Only visual features → predict tools at t+horizon
-    2. Timed: Visual features + timing signals → predict tools at t+horizon
-    
-    In the timed mode, timing signals come from:
-    - During training: Ground truth timing (to learn the relationship)
-    - During inference: Task A model predictions (to test if predictions help)
+    dataset for task B: tool anticipation -- baseline, oracle timed and using task a predictions
     """
     
     def __init__(
@@ -477,9 +451,11 @@ class TaskBDataset(Dataset):
         phase_dir: Path,
         tool_dir: Path,
         phase_stats: PhaseStatistics,
-        horizon: int = 5,  # Predict tools 5 seconds ahead
-        include_timing: bool = False,  # Whether to include timing signals
+        horizon: int = 5,
+        include_timing: bool = False,
         sequence_length: int = 1,
+        task_a_model = None,  # use Task A predictions instead of ground truth
+        device = None
     ):
         self.video_ids = video_ids
         self.features_dir = Path(features_dir)
@@ -489,15 +465,24 @@ class TaskBDataset(Dataset):
         self.horizon = horizon
         self.include_timing = include_timing
         self.sequence_length = sequence_length
+        self.task_a_model = task_a_model
+        self.device = device
         
-        # Load all videos
+        # load all videos
         self.videos: List[VideoData] = []
-        print(f"Loading {len(video_ids)} videos for Task B...")
+        print(f"loading {len(video_ids)} videos for Task B...")
         for vid_id in video_ids:
             video = VideoData(vid_id, features_dir, phase_dir, tool_dir)
             self.videos.append(video)
         
-        # Build sample index
+        # precompute task A predictions if provided
+        self.task_a_preds = None
+        if task_a_model is not None:
+            if device is None:
+                raise ValueError("device must be provided when task_a_model is used")
+            self._precompute_task_a_predictions()
+        
+        # build sample index
         self.index_map: List[Tuple[int, int]] = []
         for video_idx, video in enumerate(self.videos):
             start_t = self.sequence_length - 1
@@ -505,8 +490,68 @@ class TaskBDataset(Dataset):
             for t in range(start_t, end_t):
                 self.index_map.append((video_idx, t))
         
-        mode = "timed" if include_timing else "baseline"
-        print(f"Created Task B dataset ({mode}): {len(self.index_map)} samples")
+        if include_timing:
+            if task_a_model is not None:
+                mode = "task A timed (predicted)"
+            else:
+                mode = "Oracle timed (ground truth)"
+        else:
+            mode = "baseline (no timing)"
+        # print(f"created task B dataset ({mode}): {len(self.index_map)} samples")
+    
+    def _precompute_task_a_predictions(self):
+        """cache Task A predictions for all video frames."""
+        # print("precomputing task A predictions for all frames...")
+        self.task_a_preds = {}  # {video_id: [(pred_remaining_phase, pred_remaining_surgery), ...]}
+        
+        self.task_a_model.eval()
+        with torch.no_grad():
+            for video in tqdm(self.videos, desc="running Task A model"):
+                preds = []
+                for t in range(video.duration):
+                    # prepare Task A input
+                    features = torch.tensor(video.features[t], dtype=torch.float32).unsqueeze(0)
+                    
+                    phase_idx = video.phases[t]
+                    phase_onehot = torch.zeros(NUM_PHASES, dtype=torch.float32)
+                    phase_onehot[phase_idx] = 1.0
+                    phase_onehot = phase_onehot.unsqueeze(0)
+                    
+                    # elapsed times
+                    elapsed_phase = video.get_elapsed_phase_time(t)
+                    elapsed_surgery = float(t)
+                    
+                    # normalise
+                    phase_name = IDX_TO_PHASE[phase_idx]
+                    mean_phase_dur = self.phase_stats.mean_durations.get(phase_name, 300.0)
+                    mean_surgery_dur = self.phase_stats.mean_surgery_duration
+                    
+                    elapsed_phase_norm = elapsed_phase / max(mean_phase_dur, 1.0)
+                    elapsed_surgery_norm = elapsed_surgery / max(mean_surgery_dur, 1.0)
+                    
+                    # batch for Task A model
+                    batch = {
+                        'features': features.to(self.device),
+                        'phase_onehot': phase_onehot.to(self.device),
+                        'elapsed_phase': torch.tensor([elapsed_phase_norm], dtype=torch.float32).to(self.device),
+                        'elapsed_surgery': torch.tensor([elapsed_surgery_norm], dtype=torch.float32).to(self.device),
+                    }
+                    
+                    # run task A model
+                    output = self.task_a_model(batch)
+                    
+                    # denormalise predictions back to seconds
+                    pred_remaining_phase = output['remaining_phase'].item() * mean_phase_dur
+                    pred_remaining_surgery = output['remaining_surgery'].item() * mean_surgery_dur
+                    
+                    # clip to reasonable values (non-negative)
+                    pred_remaining_phase = max(0.0, pred_remaining_phase)
+                    pred_remaining_surgery = max(0.0, pred_remaining_surgery)
+                    
+                    preds.append((pred_remaining_phase, pred_remaining_surgery))
+                
+                self.task_a_preds[video.video_id] = preds
+        # print(f"precomputed predictions for {len(self.task_a_preds)} videos")
     
     def __len__(self) -> int:
         return len(self.index_map)
@@ -515,7 +560,7 @@ class TaskBDataset(Dataset):
         video_idx, t = self.index_map[idx]
         video = self.videos[video_idx]
         
-        # Visual features
+        # visual features
         if self.sequence_length == 1:
             features = video.features[t]
         else:
@@ -526,15 +571,15 @@ class TaskBDataset(Dataset):
                 seq = np.vstack([pad, seq])
             features = seq
         
-        # Current phase
+        # current phase
         phase_idx = video.phases[t]
         phase_onehot = np.zeros(NUM_PHASES, dtype=np.float32)
         phase_onehot[phase_idx] = 1.0
         
-        # Target: tools at t + horizon
+        # target = tools at t + horizon
         target_tools = video.tools[t + self.horizon]
         
-        # Current tools (useful context)
+        # current tools
         current_tools = video.tools[t]
         
         sample = {
@@ -548,38 +593,52 @@ class TaskBDataset(Dataset):
         }
         
         if self.include_timing:
-            # Timing signals (ground truth during training)
             timing = self._get_timing_signals(video, t)
             sample['timing'] = torch.tensor(timing, dtype=torch.float32)
-        
         return sample
     
     def _get_timing_signals(self, video: VideoData, t: int) -> np.ndarray:
         """
-        get timing signals for the timed model.
-        
-        outputs that Task A predicts:
-        1. remaining phase time (normalised)
-        2. remaining surgery time (normalised) 
-        3. progress in current phase (0-1)
-        4. progress in surgery (0-1)
-        5. pace signal (elapsed / expected)
+        get timing signals - uses Task A predictions if available, otherwise ground truth.
         """
         phase_idx = video.phases[t]
         phase_name = IDX_TO_PHASE[phase_idx]
         mean_phase_dur = self.phase_stats.mean_durations.get(phase_name, 300.0)
         mean_surgery_dur = self.phase_stats.mean_surgery_duration
         
+        # elapsed time = ground truth
         elapsed_phase = video.get_elapsed_phase_time(t)
-        remaining_phase = video.get_remaining_phase_time(t)
-        remaining_surgery = video.get_remaining_surgery_time(t)
+        elapsed_surgery = float(t)
+        
+        # remaining times: task A predictions OR ground truth
+        if self.task_a_preds is not None:
+            # PREDICTED remaining times from task A
+            pred_remaining_phase, pred_remaining_surgery = self.task_a_preds[video.video_id][t]
+            remaining_phase = pred_remaining_phase
+            remaining_surgery = pred_remaining_surgery
+        else:
+            # GROUND TRUTH remaining times
+            remaining_phase = video.get_remaining_phase_time(t)
+            remaining_surgery = video.get_remaining_surgery_time(t)
+        
+        # CONTINUOUS timing signals only
+        total_phase = elapsed_phase + remaining_phase + 1e-6
+        phase_progress = elapsed_phase / total_phase
+        
+        total_surgery = elapsed_surgery + remaining_surgery + 1e-6
+        surgery_progress = elapsed_surgery / total_surgery
+        
+        # soft proximity signals (continuous, not binary)
+        phase_proximity = 1.0 / (1.0 + remaining_phase / 60.0)  # soft version of near_phase_end
+        surgery_proximity = 1.0 / (1.0 + remaining_surgery / 300.0)  # soft version of near_surgery_end
         
         signals = [
-            remaining_phase / max(mean_phase_dur, 1.0),           # normalised remaining phase time
-            remaining_surgery / max(mean_surgery_dur, 1.0),       # normalised RSD
-            elapsed_phase / (elapsed_phase + remaining_phase + 1e-6),  # phase progress
-            t / video.duration,                                    # surgery progress
-            elapsed_phase / max(mean_phase_dur * 0.5, 1.0),       # pace signal
+            remaining_phase / max(mean_phase_dur, 1.0),           # 1. normalised remaining phase
+            remaining_surgery / max(mean_surgery_dur, 1.0),       # 2. normalised RSD
+            phase_progress,                                       # 3. phase progress (0-1)
+            surgery_progress,                                     # 4. surgery progress (0-1)
+            phase_proximity,                                      # 5. soft phase end proximity
+            surgery_proximity,                                    # 6. soft surgery end proximity
         ]
         return np.array(signals, dtype=np.float32)
     
@@ -595,14 +654,12 @@ class TaskBDataset(Dataset):
         freq = tool_counts / total
         weights = 1.0 / (freq + 1e-6)
         weights = weights / weights.sum() * NUM_TOOLS
-        
         return torch.tensor(weights, dtype=torch.float32)
 
 
 ###################################################################################################################################
 # data module
 ###################################################################################################################################
-
 class Cholec80DataModule:
     """
     manages data loading for both task A and B.
@@ -634,18 +691,18 @@ class Cholec80DataModule:
         self.test_videos = TEST_VIDEOS
         
         # compute statistics from training set
-        print("Computing phase statistics from training videos...")
+        # print("computing phase statistics from training videos...")
         self.phase_stats = PhaseStatistics.compute_from_videos(
             self.phase_dir, self.train_videos
         )
         
         # print stats
-        print(f"\nPhase duration statistics (from {len(self.train_videos)} training videos):")
+        # print(f"\nphase duration statistics (from {len(self.train_videos)} training videos):")
         for phase in PHASES:
             mean = self.phase_stats.mean_durations[phase]
             std = self.phase_stats.std_durations[phase]
             print(f"  {phase}: {mean:.1f} ± {std:.1f} seconds")
-        print(f"  Surgery duration: {self.phase_stats.mean_surgery_duration:.1f} ± {self.phase_stats.std_surgery_duration:.1f} seconds")
+        print(f"surgery duration: {self.phase_stats.mean_surgery_duration:.1f} ± {self.phase_stats.std_surgery_duration:.1f} seconds")
     
     # task A datasets
     def get_task_a_train(self, sequence_length: int = 10) -> TaskADataset:
@@ -666,17 +723,19 @@ class Cholec80DataModule:
             self.tool_dir, self.phase_stats, sequence_length=sequence_length
         )
     
-    # Task B datasets
-    def get_task_b_train(self, include_timing: bool = False) -> TaskBDataset:
+    # task B datasets
+    def get_task_b_train(self, include_timing: bool = False, task_a_model=None, device=None) -> TaskBDataset:
         return TaskBDataset(
             self.train_videos, self.features_dir, self.phase_dir,
-            self.tool_dir, self.phase_stats, self.horizon, include_timing
-        )
-    
-    def get_task_b_val(self, include_timing: bool = False) -> TaskBDataset:
+            self.tool_dir, self.phase_stats, self.horizon, include_timing,
+            task_a_model=task_a_model, device=device
+    )
+
+    def get_task_b_val(self, include_timing: bool = False, task_a_model=None, device=None) -> TaskBDataset:
         return TaskBDataset(
             self.val_videos, self.features_dir, self.phase_dir,
-            self.tool_dir, self.phase_stats, self.horizon, include_timing
+            self.tool_dir, self.phase_stats, self.horizon, include_timing,
+            task_a_model=task_a_model, device=device
         )
     
     def get_task_b_test(self, include_timing: bool = False) -> TaskBDataset:
@@ -698,29 +757,30 @@ class Cholec80DataModule:
             shuffle=False, num_workers=self.num_workers, pin_memory=True
         )
     
-    def task_b_train_loader(self, include_timing: bool = False) -> DataLoader:
+    def task_b_train_loader(self, include_timing: bool = False, task_a_model=None, device=None) -> DataLoader:
         return DataLoader(
-            self.get_task_b_train(include_timing), batch_size=self.batch_size,
-            shuffle=True, num_workers=self.num_workers, pin_memory=True
-        )
-    
-    def task_b_val_loader(self, include_timing: bool = False) -> DataLoader:
+        self.get_task_b_train(include_timing, task_a_model, device), 
+        batch_size=self.batch_size,
+        shuffle=True, num_workers=self.num_workers, pin_memory=True
+    )
+
+    def task_b_val_loader(self, include_timing: bool = False, task_a_model=None, device=None) -> DataLoader:
         return DataLoader(
-            self.get_task_b_val(include_timing), batch_size=self.batch_size,
-            shuffle=False, num_workers=self.num_workers, pin_memory=True
-        )
+        self.get_task_b_val(include_timing, task_a_model, device), 
+        batch_size=self.batch_size,
+        shuffle=False, num_workers=self.num_workers, pin_memory=True
+    )
 
 
 ###################################################################################################################################
 # test
 ###################################################################################################################################
-
 if __name__ == "__main__":
     base_dir = Path(__file__).parent.parent
     data_dir = base_dir / "data"
     
     print("=" * 70)
-    print("Testing Cholec80 Dataset for Task A and Task B")
+    print("testing Cholec80 dataset for task A and task B")
     print("=" * 70)
     
     # create data module
@@ -728,66 +788,66 @@ if __name__ == "__main__":
     
     # test Task A
     print("\n" + "=" * 70)
-    print("TASK A: Remaining Time Prediction")
+    print("TASK A: remaining time prediction")
     print("=" * 70)
     
     task_a_train = dm.get_task_a_train()
-    print(f"\nTrain samples: {len(task_a_train)}")
+    print(f"\ntrain samples: {len(task_a_train)}")
     
     sample = task_a_train[5000]  # get sample from middle of a surgery
-    print("\nSample contents:")
+    print("\nsample contents:")
     for key, value in sample.items():
         if isinstance(value, torch.Tensor):
             print(f"  {key}: shape={value.shape}, dtype={value.dtype}")
             if value.numel() < 10:
-                print(f"       value={value}")
+                print(f"value={value}")
         else:
-            print(f"  {key}: {value}")
+            print(f"{key}: {value}")
     
     # test task B baseline
     print("\n" + "=" * 70)
-    print("TASK B: Tool Anticipation (Baseline - no timing)")
+    print("TASK B: tool anticipation (baseline no timing)")
     print("=" * 70)
     
     task_b_baseline = dm.get_task_b_train(include_timing=False)
-    print(f"\nTrain samples: {len(task_b_baseline)}")
+    print(f"\ntrain samples: {len(task_b_baseline)}")
     
     sample_b = task_b_baseline[5000]
-    print("\nSample contents:")
+    print("\nsample contents:")
     for key, value in sample_b.items():
         if isinstance(value, torch.Tensor):
-            print(f"  {key}: shape={value.shape}")
+            print(f"{key}: shape={value.shape}")
         else:
-            print(f"  {key}: {value}")
+            print(f"{key}: {value}")
     
     # test task B timed
     print("\n" + "=" * 70)
-    print("TASK B: Tool Anticipation (Timed - with timing signals)")
+    print("TASK B: tool anticipation (with timing signals)")
     print("=" * 70)
     
     task_b_timed = dm.get_task_b_train(include_timing=True)
     sample_b_timed = task_b_timed[5000]
-    print("\nSample contents:")
+    print("\nsample contents:")
     for key, value in sample_b_timed.items():
         if isinstance(value, torch.Tensor):
-            print(f"  {key}: shape={value.shape}")
+            print(f"{key}: shape={value.shape}")
             if key == 'timing':
-                print(f"       value={value}")
+                print(f"value={value}")
         else:
             print(f"  {key}: {value}")
     
     # test dataloader
     print("\n" + "=" * 70)
-    print("Testing DataLoader")
+    print("testing DataLoader")
     print("=" * 70)
     
     loader = dm.task_a_train_loader()
     batch = next(iter(loader))
-    print("\nBatch shapes:")
+    print("\nbatch shapes:")
     for key, value in batch.items():
         if isinstance(value, torch.Tensor):
-            print(f"  {key}: {value.shape}")
+            print(f"{key}: {value.shape}")
     
     print("\n" + "=" * 70)
-    print("All tests passed!")
+    print("all tests passed!")
     print("=" * 70)

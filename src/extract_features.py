@@ -12,24 +12,17 @@ video_dir = os.path.join(base_dir, "data", "cholec80", "videos")
 output_dir = os.path.join(base_dir, "data", "features")
 batch_size = 32
 
-
+###################################################################################################################################
 def get_device():
     if torch.backends.mps.is_available():
         print("using m1 GPU acceleration")
         return torch.device("mps")
-    elif torch.cuda.is_available():
-        print("using nvidia gpu acceleration")
-        return torch.device("cuda")
     else:
         print("no gpu detected > using cpu")
         return torch.device("cpu")
-
-
 device = get_device()
 
 # load resnet, remove classification head and return the 2048-dim feature extractor
-
-
 def get_resnet_feature_extractor():
     try:
         weights = models.ResNet50_Weights.IMAGENET1K_V1
@@ -44,9 +37,8 @@ def get_resnet_feature_extractor():
     model.eval()  # freeze layers
     return model
 
+
 # reads video, extracts 1fps, runs resnet and returens numpy array of shape (n_seconds, 2048)
-
-
 def extract_features_for_video(video_path, model, transform):
     capture = cv2.VideoCapture(video_path)
     if not capture.isOpened():
@@ -107,10 +99,10 @@ def extract_features_for_video(video_path, model, transform):
     if abs(final_features.shape[0] - expected_seconds) > 5:
         print(
             f"warning: {video_path} expected ~{expected_seconds} features, got {final_features.shape[0]}")
-
     return final_features
 
-
+###################################################################################################################################
+###################################################################################################################################
 def main():
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -133,7 +125,7 @@ def main():
         return
     video_files = [f for f in os.listdir(video_dir) if f.endswith('.mp4')]
     video_files.sort()
-    print(f"found {len(video_files)} videos. starting extraction at 1fps")
+    # print(f"found {len(video_files)} videos. starting extraction at 1fps")
 
     for vid_file in tqdm(video_files):
         video_name = vid_file.split('.')[0]
@@ -153,6 +145,8 @@ def main():
             print(f"no features extracted for {vid_file}")
     print(f"done - all features extracted to {output_dir}")
 
-
+###################################################################################################################################
+###################################################################################################################################
+###################################################################################################################################
 if __name__ == "__main__":
     main()
